@@ -7,14 +7,14 @@ from torch import nn, optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from dataset import VideoDataset, VideoDataset1M
+from dataset import MRIDataset, ToTensor
 from network import R2Plus1DClassifier
 
 # Use GPU if available else revert to CPU
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print("Device being used:", device)
 
-def train_model(num_classes, directory, layer_sizes=[2, 2, 2, 2], num_epochs=45, save=True, path="model_data.pth.tar"):
+def train_model(num_classes, directory, layer_sizes=[2, 2, 2, 2], num_epochs=45, save=True, path="mrnet.pth.tar"):
     """Initalizes and the model for a fixed number of epochs, using dataloaders from the specified directory, 
     selected optimizer, scheduler, criterion, defualt otherwise. Features saving and restoration capabilities as well. 
     Adapted from the PyTorch tutorial found here: https://pytorch.org/tutorials/beginner/transfer_learning_tutorial.html

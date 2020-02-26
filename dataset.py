@@ -3,11 +3,22 @@ from pathlib import Path
 
 import cv2
 import random
+import re
 import numpy as np
+import pandas as pd
+import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
 
-class VideoDataset(Dataset):
+digits = re.compile(r'(\d+)')
+def tokenize(filename):
+    return tuple(int(token) if match else token
+                for token, match in
+                ((fragment, digits.search(fragment))
+                for fragment in digits.split(filename)))
+
+class MRIDataset(Dataset):
     r"""A Dataset for a folder of videos. Expects the directory structure to be
     directory->[train/val/test]->[class labels]->[videos]. Initializes with a list 
     of all file names, along with an array of labels, with label being automatically
@@ -16,48 +27,45 @@ class VideoDataset(Dataset):
         Args:
             directory (str): The path to the directory containing the train/val/test datasets
             mode (str, optional): Determines which folder of the directory the dataset will read from. Defaults to 'train'.
-            if the mode==train: random crop, flip, and slice selection are performed; 
+            if the mode==train: random crop, lr flip, and randomlized slice selection are performed; 
             if the mode==val/test: center crop and sequencial slice selection are performed.
             clip_len (int, optional): Determines how many frames are there in each clip. Defaults to 16. 
-        """
+        returns:
+            buffers: numpy array with shape: [3, 16, 224, 224]
+            label: numpy array (1D) with shape: [3,]
+    """
 
-    def __init__(self, directory, mode='train', clip_len=16):
-        self.folder = Path(directory)/mode  # get the directory of the specified split
+    def __init__(self, directory, mode='train', clip_len=16, transform=None):
+        self.mode = mode
+        self.transform = transform
+        self.folder = os.path.join(directory, self.mode)  # get the directory of the specified split
         self.views = ['sagittal', 'coronal', 'axial']
         self.scanlists = os.listdir(os.path.join(self.folder, self.views[0]))
-
+        self.scanlists.sort(key=tokenize)
         self.clip_len = clip_len
-
-        # the following three parameters are chosen as described in the paper section 4.1
         self.resize_height = 256
         self.resize_width = 256
         self.crop_size = 224
 
         self.df = pd.read_csv('MRnet_labels.csv')
-        self.df = self.df[self.df['mode'] == mode]
-        self.df = self.df.set_index("Scan Index")
-        self.PRED_LABEL = ['abnormality', 'ACL tear', 'meniscal tear'] 
-
-    def __getitem__(self, index):
-        # loading and preprocessing. TODO move them to transform classes
-        buffer = self.loadvideo(self.fnames[index])
-        buffer = self.crop(buffer, self.clip_len, self.crop_size)
-        buffer = self.normalize(buffer)
-
-        return buffer, self.label_array[index]    
+        self.df = self.df[self.df['fold'] == self.mode]
+        self.df = self.df.set_index('Scan Index')
+        self.PRED_LABEL = ['abnormality', 'ACL tear', 'meniscal tear']    
         
-    def loadscans(self, scanname, randomslices=True):
+    def __len__(self):
+        return len(self.scanlists)
+    
+    def loadscans(self, scanname):
         scan = np.load(scanname)
         if scan.ndim != 3:
             print('Not 3D input scan numpy array!!!, it has a shape of', scan.shape)
-            break
         slice_count = int(scan.shape[0])
         slice_width = int(scan.shape[1])
         slice_height = int(scan.shape[2])
         buffer = np.empty((self.clip_len, self.resize_height, self.resize_width), np.dtype('float32'))
         
         if self.clip_len < slice_count:
-            if randomslices:
+            if self.mode == 'train' and random.random() < 0.5:
                 seq = random.sample(range(slice_count), self.clip_len)
             else:
                 cc = int(slice_count/2)
@@ -78,94 +86,84 @@ class VideoDataset(Dataset):
             frame = scan[index]
             if (slice_height != self.resize_height) or (slice_width != self.resize_width):
                 frame = cv2.resize(frame, (self.resize_width, self.resize_height))
-            buffer[count] = frame
+            buffer[count] = self.normalize_frame(frame) # normalize all slices to the range of [0, 1]
+            # buffer[count] = frame
             count += 1
 
-        return buffer            
+        return buffer 
+    
+    def crop(self, buffer, crop_size):
+        # buffer shape: [16, 256, 256]
+        if self.mode=='train':
+            height_index = np.random.randint(buffer.shape[1] - crop_size)
+            width_index = np.random.randint(buffer.shape[2] - crop_size)
+        else:
+            height_index = (buffer.shape[1] - crop_size) // 2
+            width_index = (buffer.shape[2] - crop_size) // 2
 
-    def normalize(self, buffer):
+        buffer = buffer[:, height_index:height_index + crop_size,
+                        width_index:width_index + crop_size]
+        return buffer
+    
+    def flip(self, buffer):
+        # buffer shape: [16, 224, 224]
+        if self.mode=='train':
+            # perform random lr flip
+            for n in range(len(buffer)):
+                if random.random() < 0.5:
+                    buffer[n] = np.fliplr(buffer[n])
+        return buffer
+    
+    def normalize_frame(self, frame):
         # Normalize the buffer
         # NOTE: Default values of RGB images normalization are used, as precomputed 
         # mean and std_dev values (akin to ImageNet) were unavailable for Kinetics. Feel 
         # free to push to and edit this section to replace them if found. 
-        buffer = (buffer - 128)/128
-        return buffer
+        return (frame - np.amin(frame)) / np.amax(frame - np.amin(frame))
+    
+    def __getitem__(self, index):
+        buffers = []
+        for view in self.views:
+            name = os.path.join(self.folder, view, self.scanlists[index])
+            buffer = self.loadscans(name)
+            # print(buffer.shape) # debug
+            buffer = self.crop(buffer, self.crop_size) # shape [16, 224, 224]
+            buffer = self.flip(buffer)
+            buffers.append(buffer)
+        
+        labels = np.zeros(len(self.PRED_LABEL), dtype=int) # one-hot like vector
+        for i in range(0, len(self.PRED_LABEL)):
+            if(self.df[self.PRED_LABEL[i].strip()].loc[self.scanlists[index]].astype('int') > 0):
+            # df.series.str.strip: remove leading and traling characters
+                labels[i] = self.df[self.PRED_LABEL[i].strip()].loc[self.scanlists[index]].astype('int')
+        sample = {'buffers': np.array(buffers), 'labels': labels}
+        print('debug scan name:', self.scanlists[index], 'scan label:', labels)
 
-    def __len__(self):
-        return len(self.fnames)
+        if self.transform:
+            sample = self.transform(sample)
 
-class RandomCrop(object):
-    """Crop randomly the image in a sample.
-
-    Args:
-        output_size (tuple or int): Desired output size. If int, square crop
-            is made.
-    """
-
-    def __init__(self, output_size):
-        assert isinstance(output_size, (int, tuple))
-        if isinstance(output_size, int):
-            self.output_size = (output_size, output_size)
-        else:
-            assert len(output_size) == 2
-            self.output_size = output_size
-
-    def __call__(self, sample):
-        image, landmarks = sample['image'], sample['landmarks']
-
-        h, w = image.shape[:2]
-        new_h, new_w = self.output_size
-
-        top = np.random.randint(0, h - new_h)
-        left = np.random.randint(0, w - new_w)
-
-        image = image[top: top + new_h,
-                      left: left + new_w]
-
-        landmarks = landmarks - [left, top]
-
-        return {'image': image, 'landmarks': landmarks}
+        return sample 
 
 class ToTensor(object):
     """Convert ndarrays in sample to Tensors."""
-
     def __call__(self, sample):
-        image, landmarks = sample['image'], sample['landmarks']
-
+        buffers, labels = sample['buffers'], sample['labels']
         # swap color axis because
         # numpy image: H x W x C
         # torch image: C X H X W
-        image = image.transpose((2, 0, 1))
-        return {'image': torch.from_numpy(image),
-                'landmarks': torch.from_numpy(landmarks)}
+        return {'buffers': torch.from_numpy(buffers),
+                'labels': torch.from_numpy(labels)}
+'''
+class Normalize(object):
+    def __init__(self, mean, std, inplace=False):
+        self.mean = mean
+        self.std = std
+        self.inplace = inplace
+    
+    def __call__(self, sample):
+        buffers, labels = sample['buffers'], sample['labels']
+        for n in range(buffers.shape[1]):
+            buffers[:,n,:,:] = F.normalize(buffers[:,n,:,:], self.mean, self.std, self.inplace)
+        return {'buffers': buffers, 'labels': labels}
+'''
 
-class VideoDataset1M(VideoDataset):
-    r"""Dataset that implements VideoDataset, and produces exactly 1M augmented
-    training samples every epoch.
-        
-        Args:
-            directory (str): The path to the directory containing the train/val/test datasets
-            mode (str, optional): Determines which folder of the directory the dataset will read from. Defaults to 'train'. 
-            clip_len (int, optional): Determines how many frames are there in each clip. Defaults to 8. 
-        """
-    def __init__(self, directory, mode='train', clip_len=8):
-        # Initialize instance of original dataset class
-        super(VideoDataset1M, self).__init__(directory, mode, clip_len)
-
-    def __getitem__(self, index):
-        # if we are to have 1M samples on every pass, we need to shuffle
-        # the index to a number in the original range, or else we'll get an 
-        # index error. This is a legitimate operation, as even with the same 
-        # index being used multiple times, it'll be randomly cropped, and
-        # be temporally jitterred differently on each pass, properly
-        # augmenting the data. 
-        index = np.random.randint(len(self.fnames))
-
-        buffer = self.loadvideo(self.fnames[index])
-        buffer = self.crop(buffer, self.clip_len, self.crop_size)
-        buffer = self.normalize(buffer)
-
-        return buffer, self.label_array[index]    
-
-    def __len__(self):
-        return 1000000  # manually set the length to 1 million
