@@ -32,16 +32,19 @@ def train_model(num_classes, directory, layer_sizes=[2, 2, 2, 2], num_epochs=45,
     # initalize the ResNet 18 version of this model
     model = R2Plus1DClassifier(num_classes=num_classes, layer_sizes=layer_sizes).to(device)
 
-    criterion = nn.CrossEntropyLoss() # standard crossentropy loss for classification
-    optimizer = optim.SGD(model.parameters(), lr=0.01)  # hyperparameters as given in paper sec 4.1
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)  # the scheduler divides the lr by 10 every 10 epochs
+    criterion = nn.BCELoss() # standard crossentropy loss for classification
+    optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9, weight_decay=1e-4)  # hyperparameters as given in paper sec 4.1
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.9)  # the scheduler divides the lr by 10 every 10 epochs
 
     # prepare the dataloaders into a dict
-    train_dataloader = DataLoader(VideoDataset(directory), batch_size=10, shuffle=True, num_workers=4)
+    MR_dir = '/media/tianyu.han/mri-scratch/DeepLearning/MRKnee/MRNet-v1.0/'
+    MR_dataset = MRIDataset(directory=MR_dir, transform=transforms.Compose([ToTensor()]))
+    train_dataloader = DataLoader(MR_dataset, batch_size=8, shuffle=True, num_workers=8)
     # IF training on Kinetics-600 and require exactly a million samples each epoch, 
     # import VideoDataset1M and uncomment the following
     # train_dataloader = DataLoader(VideoDataset1M(directory), batch_size=32, num_workers=4)
-    val_dataloader = DataLoader(VideoDataset(directory, mode='val'), batch_size=14, num_workers=4)
+    val_dataloader = DataLoader(MRIDataset(directory=MR_dir, mode='valid', transform=transforms.Compose([ToTensor()])), 
+                                batch_size=8, num_workers=8)
     dataloaders = {'train': train_dataloader, 'val': val_dataloader}
 
     dataset_sizes = {x: len(dataloaders[x].dataset) for x in ['train', 'val']}

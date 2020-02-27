@@ -1,10 +1,10 @@
 import torch.nn as nn
 from torch.nn.modules.utils import _triple
 
-from module import SpatioTemporalConv
+from module import SpatioTemporalConv # 2DConv --> BN+ReLU --> 1DConv 
 
 
-class SpatioTemporalResBlock(nn.Module):
+class SpatioTemporalResBlock(nn.Module): # double STCONV Residual block
     r"""Single block for the ResNet network. Uses SpatioTemporalConv in 
         the standard ResNet block layout (conv->batchnorm->ReLU->conv->batchnorm->sum->ReLU)
         
@@ -46,16 +46,15 @@ class SpatioTemporalResBlock(nn.Module):
         self.outrelu = nn.ReLU()
 
     def forward(self, x):
+        # STconv->batchnorm->ReLU->STconv->batchnorm->sum->ReLU
         res = self.relu1(self.bn1(self.conv1(x)))    
         res = self.bn2(self.conv2(res))
-
         if self.downsample:
             x = self.downsamplebn(self.downsampleconv(x))
-
         return self.outrelu(x + res)
 
 
-class SpatioTemporalResLayer(nn.Module):
+class SpatioTemporalResLayer(nn.Module): # a stack of RESBLOCKs
     r"""Forms a single layer of the ResNet network, with a number of repeating 
     blocks of same output size stacked on top of each other
         
@@ -101,21 +100,23 @@ class R2Plus1DNet(nn.Module):
     def __init__(self, layer_sizes, block_type=SpatioTemporalResBlock):
         super(R2Plus1DNet, self).__init__()
 
-        # first conv, with stride 1x2x2 and kernel size 3x7x7
+        # first conv, with stride 1x2x2 and kernel size 3x7x7 ==> spatial output [112, 112]
         self.conv1 = SpatioTemporalConv(3, 64, [3, 7, 7], stride=[1, 2, 2], padding=[1, 3, 3])
+        self.pool1 = nn.MaxPool3d((1, 3, 3), stride=(1, 2, 2)) # ==> spatial output [56, 56]
         # output of conv2 is same size as of conv1, no downsampling needed. kernel_size 3x3x3
         self.conv2 = SpatioTemporalResLayer(64, 64, 3, layer_sizes[0], block_type=block_type)
         # each of the final three layers doubles num_channels, while performing downsampling 
         # inside the first block
-        self.conv3 = SpatioTemporalResLayer(64, 128, 3, layer_sizes[1], block_type=block_type, downsample=True)
-        self.conv4 = SpatioTemporalResLayer(128, 256, 3, layer_sizes[2], block_type=block_type, downsample=True)
-        self.conv5 = SpatioTemporalResLayer(256, 512, 3, layer_sizes[3], block_type=block_type, downsample=True)
+        self.conv3 = SpatioTemporalResLayer(64, 128, 3, layer_sizes[1], block_type=block_type, downsample=True)  # ==> spatial output [28, 28]
+        self.conv4 = SpatioTemporalResLayer(128, 256, 3, layer_sizes[2], block_type=block_type, downsample=True) # ==> spatial output [14, 14]
+        self.conv5 = SpatioTemporalResLayer(256, 512, 3, layer_sizes[3], block_type=block_type, downsample=True) # ==> spatial output [7, 7]
 
         # global average pooling of the output
         self.pool = nn.AdaptiveAvgPool3d(1)
     
     def forward(self, x):
         x = self.conv1(x)
+        x = self.pool1(x)
         x = self.conv2(x)
         x = self.conv3(x)
         x = self.conv4(x)

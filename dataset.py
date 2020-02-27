@@ -35,7 +35,7 @@ class MRIDataset(Dataset):
             label: numpy array (1D) with shape: [3,]
     """
 
-    def __init__(self, directory, mode='train', clip_len=16, transform=None):
+    def __init__(self, directory, mode='train', clip_len=12, transform=None):
         self.mode = mode
         self.transform = transform
         self.folder = os.path.join(directory, self.mode)  # get the directory of the specified split
