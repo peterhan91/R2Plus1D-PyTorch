@@ -49,13 +49,12 @@ def train_model(num_classes, directory, LR=0.01, layer_sizes=[2, 2, 2, 2],
     #                                     step_size=50, gamma=0.9)  # the scheduler divides the lr by 10 every 10 epochs
 
     # prepare the dataloaders into a dict
-    MR_dir = '/media/tianyu.han/mri-scratch/DeepLearning/MRKnee/MRNet-v1.0/'
-    MR_dataset = MRIDataset(directory=MR_dir, transform=transforms.Compose([ToTensor()]))
+    MR_dataset = MRIDataset(directory=directory, transform=transforms.Compose([ToTensor()]))
     train_dataloader = DataLoader(MR_dataset, batch_size=8, shuffle=True, num_workers=8)
     # IF training on Kinetics-600 and require exactly a million samples each epoch, 
     # import VideoDataset1M and uncomment the following
     # train_dataloader = DataLoader(VideoDataset1M(directory), batch_size=32, num_workers=4)
-    val_dataloader = DataLoader(MRIDataset(directory=MR_dir, mode='valid', transform=transforms.Compose([ToTensor()])), 
+    val_dataloader = DataLoader(MRIDataset(directory=directory, mode='valid', transform=transforms.Compose([ToTensor()])), 
                                 batch_size=8, num_workers=8)
     dataloaders = {'train': train_dataloader, 'val': val_dataloader}
 
@@ -133,6 +132,7 @@ def train_model(num_classes, directory, LR=0.01, layer_sizes=[2, 2, 2, 2],
                 print("created new optimizer with LR " + str(LR))
             
             if phase == 'val' and epoch_loss < best_loss:
+                best_loss = epoch_loss
                 checkpoint(model, optimizer, epoch, epoch_acc)
             
 
