@@ -14,7 +14,17 @@ from network import R2Plus1DClassifier
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print("Device being used:", device)
 
-def train_model(num_classes, directory, layer_sizes=[2, 2, 2, 2], num_epochs=45, save=True, path="mrnet.pth.tar"):
+def checkpoint(model, optimizer, epoch, epoch_acc):
+    print('Saving Model')
+    torch.save({
+        'epoch': epoch + 1,
+        'state_dict': model.state_dict(),
+        'acc': epoch_acc,
+        'opt_dict': optimizer.state_dict(),
+        }, path)
+
+def train_model(num_classes, directory, LR=0.01, layer_sizes=[2, 2, 2, 2],
+                 num_epochs=45, save=True, path="mrnet.pth.tar"):
     """Initalizes and the model for a fixed number of epochs, using dataloaders from the specified directory, 
     selected optimizer, scheduler, criterion, defualt otherwise. Features saving and restoration capabilities as well. 
     Adapted from the PyTorch tutorial found here: https://pytorch.org/tutorials/beginner/transfer_learning_tutorial.html
@@ -33,8 +43,10 @@ def train_model(num_classes, directory, layer_sizes=[2, 2, 2, 2], num_epochs=45,
     model = R2Plus1DClassifier(num_classes=num_classes, layer_sizes=layer_sizes).to(device)
 
     criterion = nn.BCELoss() # standard crossentropy loss for classification
-    optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9, weight_decay=1e-4)  # hyperparameters as given in paper sec 4.1
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.9)  # the scheduler divides the lr by 10 every 10 epochs
+    optimizer = optim.SGD(model.parameters(), lr=LR, 
+                        momentum=0.9, weight_decay=1e-4)  # hyperparameters as given in paper sec 4.1
+    # scheduler = optim.lr_scheduler.StepLR(optimizer, 
+    #                                     step_size=50, gamma=0.9)  # the scheduler divides the lr by 10 every 10 epochs
 
     # prepare the dataloaders into a dict
     MR_dir = '/media/tianyu.han/mri-scratch/DeepLearning/MRKnee/MRNet-v1.0/'
@@ -52,6 +64,7 @@ def train_model(num_classes, directory, layer_sizes=[2, 2, 2, 2], num_epochs=45,
     # saves the time the process was started, to compute total time at the end
     start = time.time()
     epoch_resume = 0
+    best_loss = 999999
 
     # check if there was a previously saved checkpoint
     if os.path.exists(path):
@@ -78,7 +91,7 @@ def train_model(num_classes, directory, layer_sizes=[2, 2, 2, 2], num_epochs=45,
             # or being validated. Primarily affects layers such as BatchNorm or Dropout.
             if phase == 'train':
                 # scheduler.step() is to be called once every epoch during training
-                scheduler.step()
+                # scheduler.step()
                 model.train()
             else:
                 model.eval()
@@ -110,17 +123,18 @@ def train_model(num_classes, directory, layer_sizes=[2, 2, 2, 2], num_epochs=45,
 
             epoch_loss = running_loss / dataset_sizes[phase]
             epoch_acc = running_corrects.double() / dataset_sizes[phase]
-
             print(f"{phase} Loss: {epoch_loss} Acc: {epoch_acc}")
 
-    # save the model if save=True
-    if save:
-        torch.save({
-        'epoch': epoch + 1,
-        'state_dict': model.state_dict(),
-        'acc': epoch_acc,
-        'opt_dict': optimizer.state_dict(),
-        }, path)
+            if phase == 'val' and epoch_loss > best_loss:
+                print("decay loss from " + str(LR) + " to " +
+                      str(LR / 10) + " as no improvement in val loss")
+                LR = LR / 10
+                optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9, weight_decay=1e-4)
+                print("created new optimizer with LR " + str(LR))
+            
+            if phase == 'val' and epoch_loss < best_loss:
+                checkpoint(model, optimizer, epoch, epoch_acc)
+            
 
     # print the total time needed, HH:MM:SS format
     time_elapsed = time.time() - start    
