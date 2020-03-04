@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from skimage.transform import rotate
 
 import cv2
 import random
@@ -35,7 +36,7 @@ class MRIDataset(Dataset):
             label: numpy array (1D) with shape: [3,]
     """
 
-    def __init__(self, directory, mode='train', clip_len=12, transform=None):
+    def __init__(self, directory, mode='train', clip_len=32, transform=None):
         self.mode = mode
         self.transform = transform
         self.folder = os.path.join(directory, self.mode)  # get the directory of the specified split
@@ -65,15 +66,15 @@ class MRIDataset(Dataset):
         buffer = np.empty((self.clip_len, self.resize_height, self.resize_width), np.dtype('float32'))
         
         if self.clip_len < slice_count:
-            if self.mode == 'train' and random.random() < 0.5:
-                seq = random.sample(range(slice_count), self.clip_len)
+            # if self.mode == 'train' and random.random() < 0.5:
+            #    seq = random.sample(range(slice_count), self.clip_len)
+            # else:
+            cc = int(slice_count/2)
+            tt = int(self.clip_len/2)
+            if self.clip_len%2 == 0:
+                seq = [x+cc for x in range(-tt,tt)]
             else:
-                cc = int(slice_count/2)
-                tt = int(self.clip_len/2)
-                if self.clip_len%2 == 0:
-                    seq = [x+cc for x in range(-tt,tt)]
-                else:
-                    seq = [x+cc for x in range(-tt,tt+1)]
+                seq = [x+cc for x in range(-tt,tt+1)]
         else:
             seq = list(range(slice_count))
             while len(seq) < self.clip_len:
@@ -114,6 +115,16 @@ class MRIDataset(Dataset):
                     buffer[n] = np.fliplr(buffer[n])
         return buffer
     
+    def rotation(self, buffer, degree_range=15.0):
+        if self.mode=='train':
+            for n in range(len(buffer)):
+                if random.random() < 0.5:
+                    if random.random() < 0.5:
+                        buffer[n] = rotate(buffer[n], degree_range)
+                    else:
+                        buffer[n] = rotate(buffer[n], degree_range*-1.0)
+        return buffer
+    
     def normalize_frame(self, frame):
         # Normalize the buffer
         # NOTE: Default values of RGB images normalization are used, as precomputed 
@@ -129,6 +140,7 @@ class MRIDataset(Dataset):
             # print(buffer.shape) # debug
             buffer = self.crop(buffer, self.crop_size) # shape [16, 224, 224]
             buffer = self.flip(buffer)
+            buffer = self.rotation(buffer)
             buffers.append(buffer)
         
         labels = np.zeros(len(self.PRED_LABEL), dtype=int) # one-hot like vector
@@ -137,7 +149,7 @@ class MRIDataset(Dataset):
             # df.series.str.strip: remove leading and traling characters
                 labels[i] = self.df[self.PRED_LABEL[i].strip()].loc[self.scanlists[index]].astype('int')
         sample = {'buffers': np.array(buffers), 'labels': labels}
-        print('debug scan name:', self.scanlists[index], 'scan label:', labels)
+        # print('debug scan name:', self.scanlists[index], 'scan label:', labels)
 
         if self.transform:
             sample = self.transform(sample)

@@ -8,23 +8,23 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from dataset import MRIDataset, ToTensor
-from network import R2Plus1DClassifier
+from network import R2Plus1DClassifier, R2Plus1DBottleClassifier, PARALLEClassifier
+from torchvision import transforms, utils
 
 # Use GPU if available else revert to CPU
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print("Device being used:", device)
 
-def checkpoint(model, optimizer, epoch, epoch_acc):
+def save_checkpoint(model, optimizer, epoch, path):
     print('Saving Model')
     torch.save({
         'epoch': epoch + 1,
         'state_dict': model.state_dict(),
-        'acc': epoch_acc,
         'opt_dict': optimizer.state_dict(),
         }, path)
 
-def train_model(num_classes, directory, LR=0.01, layer_sizes=[2, 2, 2, 2],
-                 num_epochs=45, save=True, path="mrnet.pth.tar"):
+def train_model(num_classes, directory, LR=0.01, layer_sizes=[3, 4, 6, 3],
+                 num_epochs=50, save=True, path='mrnet.pth.tar'):
     """Initalizes and the model for a fixed number of epochs, using dataloaders from the specified directory, 
     selected optimizer, scheduler, criterion, defualt otherwise. Features saving and restoration capabilities as well. 
     Adapted from the PyTorch tutorial found here: https://pytorch.org/tutorials/beginner/transfer_learning_tutorial.html
@@ -40,9 +40,10 @@ def train_model(num_classes, directory, LR=0.01, layer_sizes=[2, 2, 2, 2],
 
 
     # initalize the ResNet 18 version of this model
-    model = R2Plus1DClassifier(num_classes=num_classes, layer_sizes=layer_sizes).to(device)
+    model = R2Plus1DBottleClassifier(num_classes=num_classes, layer_sizes=layer_sizes, CH=32).to(device)
 
     criterion = nn.BCELoss() # standard crossentropy loss for classification
+    # optimizer = optim.Adam(model.parameters(), lr=LR)
     optimizer = optim.SGD(model.parameters(), lr=LR, 
                         momentum=0.9, weight_decay=1e-4)  # hyperparameters as given in paper sec 4.1
     # scheduler = optim.lr_scheduler.StepLR(optimizer, 
@@ -50,12 +51,12 @@ def train_model(num_classes, directory, LR=0.01, layer_sizes=[2, 2, 2, 2],
 
     # prepare the dataloaders into a dict
     MR_dataset = MRIDataset(directory=directory, transform=transforms.Compose([ToTensor()]))
-    train_dataloader = DataLoader(MR_dataset, batch_size=8, shuffle=True, num_workers=8)
+    train_dataloader = DataLoader(MR_dataset, batch_size=8, shuffle=True, num_workers=16)
     # IF training on Kinetics-600 and require exactly a million samples each epoch, 
     # import VideoDataset1M and uncomment the following
     # train_dataloader = DataLoader(VideoDataset1M(directory), batch_size=32, num_workers=4)
     val_dataloader = DataLoader(MRIDataset(directory=directory, mode='valid', transform=transforms.Compose([ToTensor()])), 
-                                batch_size=8, num_workers=8)
+                                batch_size=8, num_workers=16)
     dataloaders = {'train': train_dataloader, 'val': val_dataloader}
 
     dataset_sizes = {x: len(dataloaders[x].dataset) for x in ['train', 'val']}
@@ -64,6 +65,8 @@ def train_model(num_classes, directory, LR=0.01, layer_sizes=[2, 2, 2, 2],
     start = time.time()
     epoch_resume = 0
     best_loss = 999999
+    MAX_patient = 3
+    patient = 0
 
     # check if there was a previously saved checkpoint
     if os.path.exists(path):
@@ -78,13 +81,14 @@ def train_model(num_classes, directory, LR=0.01, layer_sizes=[2, 2, 2, 2],
         # obtains the epoch the training is to resume from
         epoch_resume = checkpoint["epoch"]
 
-    for epoch in tqdm(range(epoch_resume, num_epochs), unit="epochs", initial=epoch_resume, total=num_epochs):
+    for epoch in tqdm(range(epoch_resume, num_epochs), unit="epochs", 
+                        initial=epoch_resume, total=num_epochs, ascii=True):
         # each epoch has a training and validation step, in that order
         for phase in ['train', 'val']:
 
             # reset the running loss and corrects
             running_loss = 0.0
-            running_corrects = 0
+            # running_corrects = 0
 
             # set model to train() or eval() mode depending on whether it is trained
             # or being validated. Primarily affects layers such as BatchNorm or Dropout.
@@ -96,10 +100,17 @@ def train_model(num_classes, directory, LR=0.01, layer_sizes=[2, 2, 2, 2],
                 model.eval()
 
 
-            for inputs, labels in dataloaders[phase]:
+            for sample in dataloaders[phase]:
                 # move inputs and labels to the device the training is taking place on
-                inputs = inputs.to(device)
-                labels = labels.to(device)
+                inputs, labels = sample['buffers'], sample['labels']
+                inputs = inputs.to(device, dtype= torch.float)
+                labels = labels.to(device, dtype= torch.float)
+                # inputs_x = inputs[:,0,:,:,:].unsqueeze_(1)
+                # inputs_y = inputs[:,1,:,:,:].unsqueeze_(1)
+                # inputs_z = inputs[:,2,:,:,:].unsqueeze_(1)
+                # inputs_x = inputs_x.to(device, dtype= torch.float)
+                # inputs_y = inputs_y.to(device, dtype= torch.float)
+                # inputs_z = inputs_z.to(device, dtype= torch.float)
                 optimizer.zero_grad()
 
                 # keep intermediate states iff backpropagation will be performed. If false, 
@@ -108,7 +119,7 @@ def train_model(num_classes, directory, LR=0.01, layer_sizes=[2, 2, 2, 2],
                 with torch.set_grad_enabled(phase=='train'):
                     outputs = model(inputs)
                     # we're interested in the indices on the max values, not the values themselves
-                    _, preds = torch.max(outputs, 1)  
+                    # _, preds = torch.max(outputs, 1)  
                     loss = criterion(outputs, labels)
 
                     # Backpropagate and optimize iff in training mode, else there's no intermediate
@@ -118,23 +129,27 @@ def train_model(num_classes, directory, LR=0.01, layer_sizes=[2, 2, 2, 2],
                         optimizer.step()   
 
                 running_loss += loss.item() * inputs.size(0)
-                running_corrects += torch.sum(preds == labels.data)
+                # running_corrects += torch.sum(preds == labels.data)
 
             epoch_loss = running_loss / dataset_sizes[phase]
-            epoch_acc = running_corrects.double() / dataset_sizes[phase]
-            print(f"{phase} Loss: {epoch_loss} Acc: {epoch_acc}")
+            # epoch_acc = running_corrects.double() / dataset_sizes[phase]
+            print(f"{phase} Loss: {epoch_loss}")
 
             if phase == 'val' and epoch_loss > best_loss:
-                print("decay loss from " + str(LR) + " to " +
-                      str(LR / 10) + " as no improvement in val loss")
-                LR = LR / 10
-                optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9, weight_decay=1e-4)
-                print("created new optimizer with LR " + str(LR))
+                patient +=1
+                if patient >= MAX_patient and LR > 1e-4:
+                    print("decay loss from " + str(LR) + " to " +
+                        str(LR * 0.1) + " as no improvement in val loss")
+                    LR = LR * 0.1
+                    # optimizer = optim.Adam(model.parameters(), lr=LR)
+                    optimizer = optim.SGD(model.parameters(), lr=LR, momentum=0.9, weight_decay=1e-4)
+                    print("created new optimizer with LR " + str(LR))
+                    patient = 0
             
             if phase == 'val' and epoch_loss < best_loss:
                 best_loss = epoch_loss
-                checkpoint(model, optimizer, epoch, epoch_acc)
-            
+                save_checkpoint(model, optimizer, epoch, path)
+                patient = 0     
 
     # print the total time needed, HH:MM:SS format
     time_elapsed = time.time() - start    
