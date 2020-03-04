@@ -69,16 +69,18 @@ def train_model(model, dataloaders, optimizer,
                     labels = labels.to(device, dtype= torch.float) 
                     outputs = model(inputs)
                     if i == 0:
-                        print(outputs.shape)
+                        # print(outputs.shape)
                         tl.vis.save_images(np.moveaxis(outputs.detach().cpu().numpy(), 1, -1),
                                             [4, int(outputs.shape[0]//4)], 
                                             snapshot_FOLDER+'snapshot_out_%d.png' % epoch)
+                        '''
                         tl.vis.save_images(np.moveaxis(inputs.detach().cpu().numpy(), 1, -1),
                                             [4, int(inputs.shape[0]//4)], 
                                             snapshot_FOLDER+'snapshot_in_%d.png' % epoch)
                         tl.vis.save_images(np.moveaxis(labels.detach().cpu().numpy(), 1, -1),
                                             [4, int(labels.shape[0]//4)], 
                                             snapshot_FOLDER+'snapshot_target_%d.png' % epoch)
+                        '''
                         break
         
         time_elapsed = time.time() - since
