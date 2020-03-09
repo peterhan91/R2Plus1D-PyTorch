@@ -14,7 +14,7 @@ def train_model(model, dataloaders, optimizer,
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     best_model_wts = copy.deepcopy(model.state_dict())
     best_loss = 9999
-    criterion = nn.L1Loss()
+    criterion = nn.MSELoss()
     dataset_sizes = {x: len(dataloaders[x].dataset) for x in ['train', 'val']}
     snapshot_FOLDER = './snapshot/'
     tl.files.exists_or_mkdir(snapshot_FOLDER)
@@ -25,7 +25,7 @@ def train_model(model, dataloaders, optimizer,
         model.load_state_dict(checkpoint['state_dict'])
 
     for epoch in range(num_epochs):
-        print('Epoch {}/{}'.format(epoch, num_epochs - 1))
+        print('Epoch {}/{}'.format(epoch+1, num_epochs))
         print('-' * 10)
         since = time.time()
 
@@ -73,14 +73,13 @@ def train_model(model, dataloaders, optimizer,
                         tl.vis.save_images(np.moveaxis(outputs.detach().cpu().numpy(), 1, -1),
                                             [4, int(outputs.shape[0]//4)], 
                                             snapshot_FOLDER+'snapshot_out_%d.png' % epoch)
-                        '''
-                        tl.vis.save_images(np.moveaxis(inputs.detach().cpu().numpy(), 1, -1),
-                                            [4, int(inputs.shape[0]//4)], 
-                                            snapshot_FOLDER+'snapshot_in_%d.png' % epoch)
-                        tl.vis.save_images(np.moveaxis(labels.detach().cpu().numpy(), 1, -1),
-                                            [4, int(labels.shape[0]//4)], 
-                                            snapshot_FOLDER+'snapshot_target_%d.png' % epoch)
-                        '''
+                        if epoch == 0:
+                            tl.vis.save_images(np.moveaxis(inputs.detach().cpu().numpy(), 1, -1),
+                                                [4, int(inputs.shape[0]//4)], 
+                                                snapshot_FOLDER+'snapshot_in_%d.png' % epoch)
+                            tl.vis.save_images(np.moveaxis(labels.detach().cpu().numpy(), 1, -1),
+                                                [4, int(labels.shape[0]//4)], 
+                                                snapshot_FOLDER+'snapshot_target_%d.png' % epoch)
                         break
         
         time_elapsed = time.time() - since

@@ -36,11 +36,12 @@ class MRIDataset(Dataset):
             label: numpy array (1D) with shape: [3,]
     """
 
-    def __init__(self, directory, mode='train', clip_len=32, transform=None):
+    def __init__(self, directory, mode='train', clip_len=16, transform=None):
         self.mode = mode
         self.transform = transform
         self.folder = os.path.join(directory, self.mode)  # get the directory of the specified split
         self.views = ['sagittal', 'coronal', 'axial']
+        # self.views = ['sagittal', 'sagittal', 'sagittal']
         self.scanlists = os.listdir(os.path.join(self.folder, self.views[0]))
         self.scanlists.sort(key=tokenize)
         self.clip_len = clip_len
@@ -66,15 +67,20 @@ class MRIDataset(Dataset):
         buffer = np.empty((self.clip_len, self.resize_height, self.resize_width), np.dtype('float32'))
         
         if self.clip_len < slice_count:
-            # if self.mode == 'train' and random.random() < 0.5:
-            #    seq = random.sample(range(slice_count), self.clip_len)
-            # else:
-            cc = int(slice_count/2)
-            tt = int(self.clip_len/2)
-            if self.clip_len%2 == 0:
-                seq = [x+cc for x in range(-tt,tt)]
+            if self.mode == 'train': 
+                 seq = random.sample(range(slice_count), self.clip_len)
+                 seq.sort(key=int)
             else:
-                seq = [x+cc for x in range(-tt,tt+1)]
+                # seq = list(range(slice_count))
+                # seq.sort(key=int)
+                
+                cc = int(slice_count/2)
+                tt = int(self.clip_len/2)
+                if self.clip_len%2 == 0:
+                    seq = [x+cc for x in range(-tt,tt)]
+                else:
+                    seq = [x+cc for x in range(-tt,tt+1)]
+    
         else:
             seq = list(range(slice_count))
             while len(seq) < self.clip_len:
@@ -126,11 +132,10 @@ class MRIDataset(Dataset):
         return buffer
     
     def normalize_frame(self, frame):
-        # Normalize the buffer
-        # NOTE: Default values of RGB images normalization are used, as precomputed 
-        # mean and std_dev values (akin to ImageNet) were unavailable for Kinetics. Feel 
-        # free to push to and edit this section to replace them if found. 
-        return (frame - np.amin(frame)) / np.amax(frame - np.amin(frame))
+        frame_zero = frame - np.amin(frame)
+        frame_one = frame_zero / (np.amax(frame_zero)+1e-10)
+        # frame_one_one = frame_one * 2.0 - 1.0
+        return frame_one
     
     def __getitem__(self, index):
         buffers = []

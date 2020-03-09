@@ -12,7 +12,7 @@ from torchvision import transforms, utils
 from torch.autograd import Variable
 from dataset import MRIDataset, ToTensor
 
-def make_pred_multilabel(model, directory):
+def make_pred_multilabel(model, directory, save_dir):
     """
     Gives predictions for test fold and calculates AUCs using previously trained model
     Args:
@@ -100,8 +100,9 @@ def make_pred_multilabel(model, directory):
     ax.legend(loc = 4, prop={'size': 8})
     ax.set_xlabel('False Positive Rate')
     ax.set_ylabel('True Positive Rate')
-    fig.savefig('RSNA_ROC.png', dpi=300, bbox_inches = 'tight')
+    fig.savefig(save_dir+'RSNA_ROC.png', 
+                dpi=300, bbox_inches = 'tight')
 
-    pred_df.to_csv("preds.csv", index=False)
-    auc_df.to_csv("aucs.csv", index=False)
+    pred_df.to_csv(save_dir+"preds.csv", index=False)
+    auc_df.to_csv(save_dir+"aucs.csv", index=False)
     return pred_df, auc_df
