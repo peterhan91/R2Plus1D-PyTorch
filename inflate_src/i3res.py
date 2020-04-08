@@ -8,10 +8,10 @@ from torch.nn import ReplicationPad3d
 center = False
 
 class I3ResNet(torch.nn.Module):
-    def __init__(self, resnet2d, class_nb=3):
+    def __init__(self, resnet2d, class_nb=3, expansion=1):
 
         super(I3ResNet, self).__init__()
-
+        self.expansion = expansion
         self.conv1 = inflate.inflate_conv(
             resnet2d.conv1, time_dim=3, time_padding=1, center=center)
         self.bn1 = inflate.inflate_batch_norm(resnet2d.bn1)
@@ -24,10 +24,11 @@ class I3ResNet(torch.nn.Module):
         self.layer3 = inflate_reslayer(resnet2d.layer3)
         self.layer4 = inflate_reslayer(resnet2d.layer4)
         
-        self.non_local = NONLocalBlock3D(in_channels=512)
+        self.non_local = NONLocalBlock3D(in_channels=128*self.expansion)
+        # self.non_local_ = NONLocalBlock3D(in_channels=256*self.expansion)
 
         self.pool = nn.AdaptiveAvgPool3d(1)
-        self.linear = nn.Sequential(nn.Linear(512*4, class_nb), nn.Sigmoid())
+        self.linear = nn.Sequential(nn.Linear(512*self.expansion, class_nb), nn.Sigmoid())
 
     def forward(self, x):
         x = self.conv1(x)
@@ -39,15 +40,16 @@ class I3ResNet(torch.nn.Module):
         x = self.layer2(x)
         x = self.non_local(x)
         x = self.layer3(x)
+        # x = self.non_local_(x)
         x = self.layer4(x)
 
         x = self.pool(x)
-        x = self.linear(x.view(-1, 512*4))
+        x = self.linear(x.view(-1, 512*self.expansion))
 
         return x
 
 
-def inflate_reslayer(reslayer2d, if_bottleneck=True):
+def inflate_reslayer(reslayer2d, if_bottleneck=False):
     reslayers3d = []
     for layer2d in reslayer2d:
         if if_bottleneck:

@@ -29,7 +29,7 @@ def save_checkpoint(model, optimizer, epoch, path):
         }, path)
 
 def train_model(resnet, num_classes, directory, LR=1e-3, layer_sizes=[3, 4, 6, 3],
-                 num_epochs=30, save=True, path='mrnet.pth.tar', 
+                 num_epochs=50, save=True, train_Rijeka=False, path='mrnet.pth.tar', 
                  res_path='./ResUnet/old_model/saved.pth.tar'):
     """Initalizes and the model for a fixed number of epochs, using dataloaders from the specified directory, 
     selected optimizer, scheduler, criterion, defualt otherwise. Features saving and restoration capabilities as well. 
@@ -54,8 +54,8 @@ def train_model(resnet, num_classes, directory, LR=1e-3, layer_sizes=[3, 4, 6, 3
         resunet.load_state_dict(checkpoint['state_dict'])
     '''
     # resnet = torchvision.models.resnet50(pretrained=True)
-    model = I3ResNet(copy.deepcopy(resnet)).to(device)
-    summary(model, input_size=(3, 16, 224, 224))
+    model = I3ResNet(copy.deepcopy(resnet), num_classes).to(device)
+    summary(model, input_size=(3, 32, 224, 224))
     criterion = nn.BCELoss() # standard crossentropy loss for classification
     # optimizer = optim.Adam(model.parameters(), lr=LR)
     optimizer = optim.SGD(model.parameters(), lr=LR, 
@@ -64,13 +64,15 @@ def train_model(resnet, num_classes, directory, LR=1e-3, layer_sizes=[3, 4, 6, 3
     #                                     step_size=50, gamma=0.9)  # the scheduler divides the lr by 10 every 10 epochs
 
     # prepare the dataloaders into a dict
-    MR_dataset = MRIDataset(directory=directory, transform=transforms.Compose([ToTensor()]))
-    train_dataloader = DataLoader(MR_dataset, batch_size=8, shuffle=True, num_workers=16)
+    MR_dataset = MRIDataset(directory=directory, rijeka=train_Rijeka, transform=transforms.Compose([ToTensor()]))
+    train_dataloader = DataLoader(MR_dataset, batch_size=4, 
+                                shuffle=True, num_workers=16)
     # IF training on Kinetics-600 and require exactly a million samples each epoch, 
     # import VideoDataset1M and uncomment the following
     # train_dataloader = DataLoader(VideoDataset1M(directory), batch_size=32, num_workers=4)
-    val_dataloader = DataLoader(MRIDataset(directory=directory, mode='valid', transform=transforms.Compose([ToTensor()])), 
-                                batch_size=8, num_workers=16)
+    val_dataloader = DataLoader(MRIDataset(directory=directory, mode='valid', rijeka=train_Rijeka, 
+                                            transform=transforms.Compose([ToTensor()])), 
+                                batch_size=4, num_workers=16)
     dataloaders = {'train': train_dataloader, 'val': val_dataloader}
     dataset_sizes = {x: len(dataloaders[x].dataset) for x in ['train', 'val']}
 
@@ -78,7 +80,7 @@ def train_model(resnet, num_classes, directory, LR=1e-3, layer_sizes=[3, 4, 6, 3
     start = time.time()
     epoch_resume = 0
     best_loss = 1e6
-    MAX_patient = 5
+    MAX_patient = 6
     patient = 0
 
     # check if there was a previously saved checkpoint

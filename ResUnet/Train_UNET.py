@@ -55,6 +55,10 @@ def train_model(model, dataloaders, optimizer,
             epoch_loss = running_loss / dataset_sizes[phase]
             print(f"{phase} Loss: {epoch_loss}")
 
+            if phase == 'val' and epoch % 50==0:
+                print('saving model!')
+                torch.save({'state_dict': model.state_dict()}, path)
+
             # deep copy the model
             if phase == 'val' and epoch_loss < best_loss:
                 print('saving best model')
@@ -81,7 +85,7 @@ def train_model(model, dataloaders, optimizer,
                                                 [4, int(labels.shape[0]//4)], 
                                                 snapshot_FOLDER+'snapshot_target_%d.png' % epoch)
                         break
-        
+            
         time_elapsed = time.time() - since
         print('{:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
     print('Best val loss: {:4f}'.format(best_loss))

@@ -36,28 +36,40 @@ class MRIDataset(Dataset):
             label: numpy array (1D) with shape: [3,]
     """
 
-    def __init__(self, directory, mode='train', clip_len=16, transform=None):
+    def __init__(self, directory, mode='train', clip_len=32, rijeka=False, transform=None):
         self.mode = mode
         self.transform = transform
-        self.folder = os.path.join(directory, self.mode)  # get the directory of the specified split
-        self.views = ['sagittal', 'coronal', 'axial']
+        # self.folder = os.path.join(directory, self.mode)  # get the directory of the specified split
+        self.folder = os.path.join(directory, 'data')  # get the directory of the specified split
+        self.rijeka = rijeka
+        if self.rijeka:
+            self.views = ['data', 'data', 'data']
+            self.df = pd.read_csv('rijeka_acl.csv')
+            self.PRED_LABEL = ['ACL tear'] 
+            self.scanlists = os.listdir(self.folder)
+
+        else:
+            self.views = ['sagittal', 'coronal', 'axial']
+            self.df = pd.read_csv('MRnet_labels.csv')
+            self.PRED_LABEL = ['abnormality', 'ACL tear', 'meniscal tear']
+            self.scanlists = os.listdir(os.path.join(self.folder, self.views[0])) 
         # self.views = ['sagittal', 'sagittal', 'sagittal']
-        self.scanlists = os.listdir(os.path.join(self.folder, self.views[0]))
         self.scanlists.sort(key=tokenize)
         self.clip_len = clip_len
         self.resize_height = 256
         self.resize_width = 256
         self.crop_size = 224
+        self.mean = [0.485, 0.456, 0.406]
+        self.std = [0.229, 0.224, 0.225]
 
-        self.df = pd.read_csv('MRnet_labels.csv')
+        # self.df = pd.read_csv('MRnet_labels.csv')
         self.df = self.df[self.df['fold'] == self.mode]
-        self.df = self.df.set_index('Scan Index')
-        self.PRED_LABEL = ['abnormality', 'ACL tear', 'meniscal tear']    
+        self.df = self.df.set_index('Scan Index')   
         
     def __len__(self):
         return len(self.scanlists)
     
-    def loadscans(self, scanname):
+    def loadscans(self, scanname, view_ID):
         scan = np.load(scanname)
         if scan.ndim != 3:
             print('Not 3D input scan numpy array!!!, it has a shape of', scan.shape)
@@ -71,16 +83,16 @@ class MRIDataset(Dataset):
                  seq = random.sample(range(slice_count), self.clip_len)
                  seq.sort(key=int)
             else:
-                # seq = list(range(slice_count))
-                # seq.sort(key=int)
-                
+                seq = list(range(slice_count))
+                seq.sort(key=int)
+                '''
                 cc = int(slice_count/2)
                 tt = int(self.clip_len/2)
                 if self.clip_len%2 == 0:
                     seq = [x+cc for x in range(-tt,tt)]
                 else:
                     seq = [x+cc for x in range(-tt,tt+1)]
-    
+                '''
         else:
             seq = list(range(slice_count))
             while len(seq) < self.clip_len:
@@ -93,7 +105,11 @@ class MRIDataset(Dataset):
             frame = scan[index]
             if (slice_height != self.resize_height) or (slice_width != self.resize_width):
                 frame = cv2.resize(frame, (self.resize_width, self.resize_height))
-            buffer[count] = self.normalize_frame(frame) # normalize all slices to the range of [0, 1]
+            frame = self.normalize_frame(frame)
+            # frame -= self.mean[view_ID]
+            # frame /= self.std[view_ID]
+            buffer[count] = frame # normalize all slices to the range of [0, 1]
+
             # buffer[count] = frame
             count += 1
 
@@ -114,21 +130,20 @@ class MRIDataset(Dataset):
     
     def flip(self, buffer):
         # buffer shape: [16, 224, 224]
-        if self.mode=='train':
+        if self.mode=='train' and random.random() < 0.5:
             # perform random lr flip
             for n in range(len(buffer)):
-                if random.random() < 0.5:
-                    buffer[n] = np.fliplr(buffer[n])
+                buffer[n] = np.fliplr(buffer[n])
         return buffer
     
-    def rotation(self, buffer, degree_range=15.0):
+    def rotation(self, buffer, degree_range=10.0):
         if self.mode=='train':
             for n in range(len(buffer)):
                 if random.random() < 0.5:
                     if random.random() < 0.5:
                         buffer[n] = rotate(buffer[n], degree_range)
                     else:
-                        buffer[n] = rotate(buffer[n], degree_range*-1.0)
+                        buffer[n] = rotate(buffer[n], -1*degree_range)
         return buffer
     
     def normalize_frame(self, frame):
@@ -139,13 +154,16 @@ class MRIDataset(Dataset):
     
     def __getitem__(self, index):
         buffers = []
-        for view in self.views:
-            name = os.path.join(self.folder, view, self.scanlists[index])
-            buffer = self.loadscans(name)
+        for view_ID, view in enumerate(self.views):
+            if self.rijeka:
+                name = os.path.join(self.folder, self.scanlists[index])
+            else:
+                name = os.path.join(self.folder, view, self.scanlists[index])
+            buffer = self.loadscans(name, view_ID)
             # print(buffer.shape) # debug
             buffer = self.crop(buffer, self.crop_size) # shape [16, 224, 224]
-            buffer = self.flip(buffer)
-            buffer = self.rotation(buffer)
+            # buffer = self.flip(buffer)
+            # buffer = self.rotation(buffer)
             buffers.append(buffer)
         
         labels = np.zeros(len(self.PRED_LABEL), dtype=int) # one-hot like vector
